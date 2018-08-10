@@ -1,13 +1,13 @@
-#include <math.h>
-#include <uWS/uWS.h>
-#include <chrono>
-#include <iostream>
-#include <thread>
-#include <vector>
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "MPC.h"
 #include "json.hpp"
+#include <chrono>
+#include <iostream>
+#include <math.h>
+#include <thread>
+#include <uWS/uWS.h>
+#include <vector>
 
 // for convenience
 using json = nlohmann::json;
@@ -20,7 +20,8 @@ double rad2deg(double x) { return x * 180 / pi(); }
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
 // else the empty string "" will be returned.
-string hasData(string s) {
+string hasData(string s)
+{
   auto found_null = s.find("null");
   auto b1 = s.find_first_of("[");
   auto b2 = s.rfind("}]");
@@ -33,7 +34,8 @@ string hasData(string s) {
 }
 
 // Evaluate a polynomial.
-double polyeval(Eigen::VectorXd coeffs, double x) {
+double polyeval(Eigen::VectorXd coeffs, double x)
+{
   double result = 0.0;
   for (int i = 0; i < coeffs.size(); i++) {
     result += coeffs[i] * pow(x, i);
@@ -45,7 +47,8 @@ double polyeval(Eigen::VectorXd coeffs, double x) {
 // Adapted from
 // https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
 Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
-                        int order) {
+    int order)
+{
   assert(xvals.size() == yvals.size());
   assert(order >= 1 && order <= xvals.size() - 1);
   Eigen::MatrixXd A(xvals.size(), order + 1);
@@ -65,14 +68,23 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
   return result;
 }
 
-int main() {
+// Translate map coordinates to vehicle coordinates
+vector<double> mapc2vehc(double x_map, double y_map, double psi,
+    double xv_map, yv_map) {
+  double x_veh = xv_map + (x_map * cos(psi) + y_map * sin(psi));
+  double y_veh = yv_map + (y_map * cos(psi) - x_map * sin(psi));
+  return {x_veh, y_veh};
+}
+
+int main()
+{
   uWS::Hub h;
 
   // MPC is initialized here!
   MPC mpc;
 
-  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
-                     uWS::OpCode opCode) {
+  h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char* data, size_t length,
+      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -98,8 +110,35 @@ int main() {
           * Both are in between [-1, 1].
           *
           */
-          double steer_value;
-          double throttle_value;
+          Eigen::VectorXd state;
+          Eigen::VectorXd coeffs = polyfit(ptsx, ptsy, 3);
+
+          // plot reference trajectory
+          int trajectory_len = 10; // meters
+          int n_plot_points = 10;
+          vector<double> ref_x_vals;
+          vector<double> ref_y_vals;
+          for (int i = 0; i < n_plot_points; i++) {
+            double x_map = i * (trajectory_len / n_plot_points);
+            double y_map = polyeval(coeffs, x_map);
+            double<vector> veh_c = mapc2vehc(x_map, y_map, psi, px, py)
+            ref_x_vals.push_back(veh_c[0]);
+            ref_y_vals.push_back(veh_c[1]);
+          }
+
+          state << px, py, psi, v, polyeval(coeffs, px) - py, psi - atan(coeffs[1]);
+
+          vector<double> result = mpc.solve(state, coeffs);
+          // convert map coordinates to vehicle coordinates
+          for (int i = 0; i < result[2].size(); i++) {
+            double x_map = result[2][i];
+            double y_map = result[3][i];
+            double<vector> veh_c = mapc2vehc(x_map, y_map, psi, px, py)
+              result[2][i] = veh_c[0];
+              result[3][i] = veh_c[1];
+          }
+          double steer_value = -result[0][0] / deg2rad(25);
+          double throttle_value = result[1][0];
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
@@ -107,9 +146,9 @@ int main() {
           msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
 
-          //Display the MPC predicted trajectory 
-          vector<double> mpc_x_vals;
-          vector<double> mpc_y_vals;
+          //Display the MPC predicted trajectory
+          vector<double> mpc_x_vals = result[2];
+          vector<double> mpc_y_vals = result[3];
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
@@ -118,15 +157,14 @@ int main() {
           msgJson["mpc_y"] = mpc_y_vals;
 
           //Display the waypoints/reference line
-          vector<double> next_x_vals;
-          vector<double> next_y_vals;
+          vector<double> next_x_vals = ref_x_vals;
+          vector<double> next_y_vals = ref_y_vals;
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
 
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
-
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
@@ -153,8 +191,8 @@ int main() {
   // We don't need this since we're not using HTTP but if it's removed the
   // program
   // doesn't compile :-(
-  h.onHttpRequest([](uWS::HttpResponse *res, uWS::HttpRequest req, char *data,
-                     size_t, size_t) {
+  h.onHttpRequest([](uWS::HttpResponse* res, uWS::HttpRequest req, char* data,
+      size_t, size_t) {
     const std::string s = "<h1>Hello world!</h1>";
     if (req.getUrl().valueLength == 1) {
       res->end(s.data(), s.length());
@@ -169,7 +207,7 @@ int main() {
   });
 
   h.onDisconnection([&h](uWS::WebSocket<uWS::SERVER> ws, int code,
-                         char *message, size_t length) {
+      char* message, size_t length) {
     ws.close();
     std::cout << "Disconnected" << std::endl;
   });
