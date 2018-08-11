@@ -6,8 +6,8 @@
 using CppAD::AD;
 
 // TODO: Set the timestep length and duration
-size_t N = 20;
-double dt = 0.5;
+size_t N = 25;
+double dt = 0.1;
 
 int x_start = 0;
 int y_start = N;
@@ -30,6 +30,13 @@ int a_start = N * 6 + N - 1;
 // This is the length from front to CoG that has a similar radius.
 const double Lf = 2.67;
 
+const double ref_v = 70;
+const double steer_angle = 20;
+
+constexpr double pi() { return M_PI; }
+double deg2rad(double x) { return x * pi() / 180; }
+double rad2deg(double x) { return x * 180 / pi(); }
+
 class FG_eval {
   public:
   // Fitted polynomial coefficients
@@ -49,21 +56,25 @@ class FG_eval {
 
     // constrain cost to the reference state
     for (int t = 0; t < N; t++) {
-      fg[0] += AD::pow(vars[cte_start + t], 2);
-      fg[0] += AD::pow(vars[epsi_start + t], 2);
-      fg[0] += AD::pow(vars[v_start + t], 2);
+      fg[0] += 400 * CppAD::pow(vars[cte_start + t], 2);
+      fg[0] += 400 * CppAD::pow(vars[epsi_start + t], 2);
+      fg[0] += 20 * CppAD::pow(vars[v_start + t] - ref_v, 2);
+      fg[0] += 10 * CppAD::pow((vars[epsi_start + t] + vars[cte_start]) * vars[v_start + t], 2);
     }
 
     // constrain cost to limit change rate and smooth the actuator
     for (int t = 0; t < N - 1; t++) {
-      fg[0] += AD::pow(vars[delta_start + t], 2);
-      fg[0] += AD::pow(vars[a_start + t], 2);
+      // fg[0] += 2000 * CppAD::pow(vars[cte_start + t + 1] - vars[cte_start + t], 2);
+      // fg[0] += 2000 * CppAD::pow(vars[epsi_start + t + 1] - vars[epsi_start + t], 2);
+      fg[0] += 800 * CppAD::pow(vars[delta_start + t], 2);
+      fg[0] += 150 * CppAD::pow(vars[delta_start + t] * vars[v_start + t], 2);
+      fg[0] += 350 * CppAD::pow(vars[a_start + t], 2);
     }
 
     // constrain cost to limit difference between sequential actuations
     for (int t = 0; t < N - 2; t++) {
-      fg[0] += AD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-      fg[0] += AD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+      fg[0] += 800 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+      fg[0] += 350 * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
     }
 
     fg[1 + x_start] = vars[x_start];
@@ -88,11 +99,12 @@ class FG_eval {
       AD<double> cte0 = vars[cte_start + t - 1];
       AD<double> epsi0 = vars[epsi_start + t - 1];
 
-      AD<double> delta0 = vars[delta_start + t - 1] AD<double> a0 = vars[a_start + t - 1]
+      AD<double> delta0 = vars[delta_start + t - 1];
+      AD<double> a0 = vars[a_start + t - 1];
 
-          AD<double>
-              f0 = coeffs[0] + coeffs[1] * x0;
-      AD<double> psides0 = AD::atan(coeffs[1]);
+      AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * pow(x0, 2) + coeffs[3] * pow(x0, 3);
+      AD<double> psides0 = CppAD::atan(coeffs[1] + 2 * coeffs[2] * x0
+          + 3 * coeffs[3] * pow(x0, 2));
 
       // Here's `x` to get you started.
       // The idea here is to constraint this value to be 0.
@@ -106,8 +118,8 @@ class FG_eval {
       fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
       fg[1 + psi_start + t] = psi1 - (psi0 + v0 / Lf * delta0 * dt);
       fg[1 + v_start + t] = v1 - (v0 + a0 * dt);
-      fg[1 + cte_start + t] = cte1 - ((f0 - y0) + v0 * AD::sin(epsi0) * dt);
-      fg[1 + epsi_start + t] = epsi1 - ((psi0 - psides0) + v0 * / Lf * delta0 * dt);
+      fg[1 + cte_start + t] = cte1 - ((f0 - y0) + v0 * CppAD::sin(epsi0) * dt);
+      fg[1 + epsi_start + t] = epsi1 - ((psi0 - psides0) + v0 / Lf * delta0 * dt);
     }
   }
 };
@@ -118,10 +130,9 @@ class FG_eval {
 MPC::MPC() {}
 MPC::~MPC() {}
 
-vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs)
+vector<vector<double>> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs)
 {
   bool ok = true;
-  size_t i;
   typedef CPPAD_TESTVECTOR(double) Dvector;
 
   // TODO: Set the number of model variables (includes both states and inputs).
@@ -149,15 +160,15 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs)
   Dvector vars_lowerbound(n_vars);
   Dvector vars_upperbound(n_vars);
   // TODO: Set lower and upper limits for variables.
-  for (int i = 0; t < delta_start; i++) {
+  for (int i = 0; i < delta_start; i++) {
     vars_lowerbound[i] = -(1 << 15);
     vars_upperbound[i] = 1 << 15;
   }
 
   for (int i = delta_start; i < a_start; i++) {
-    // steering [-25, 25] in radians
-    vars_lowerbound[i] = -0.436332;
-    vars_upperbound[i] = 0.436332;
+    // steering [-steer_angle, steer_angle] in radians
+    vars_lowerbound[i] = -deg2rad(steer_angle);
+    vars_upperbound[i] = deg2rad(steer_angle);
   }
 
   for (int i = a_start; i < a_start + N - 1; i++) {
@@ -228,7 +239,9 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs)
   //
   // {...} is shorthand for creating a vector, so auto x1 = {1.0,2.0}
   // creates a 2 element double vector.
-  return { {solution.x[delta_start]}, {solution.x[a_start]},
-    {vector(&solution.x[x_start], &solution.x[y_start])},
-    {vector(&solution.x[y_start], &solution.x[psi_start])};
+  return {
+    { -(solution.x[delta_start + 1] / deg2rad(steer_angle))}, { solution.x[a_start] },
+    { vector<double>(&solution.x[x_start], &solution.x[N <= 6 ? x_start + N : x_start + 6]) },
+    { vector<double>(&solution.x[y_start], &solution.x[N <= 6 ? y_start + N : y_start + 6]) }
+  };
 }

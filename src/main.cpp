@@ -1,7 +1,7 @@
+#include "json.hpp"
 #include "Eigen-3.3/Eigen/Core"
 #include "Eigen-3.3/Eigen/QR"
 #include "MPC.h"
-#include "json.hpp"
 #include <chrono>
 #include <iostream>
 #include <math.h>
@@ -9,13 +9,20 @@
 #include <uWS/uWS.h>
 #include <vector>
 
+const double Lf = 2.67;
 // for convenience
 using json = nlohmann::json;
 
-// For converting back and forth between radians and degrees.
-constexpr double pi() { return M_PI; }
-double deg2rad(double x) { return x * pi() / 180; }
-double rad2deg(double x) { return x * 180 / pi(); }
+// overload << for cout to print vector
+template <typename T>
+ostream& operator<<(ostream& output, std::vector<T> const& values)
+{
+    for (auto const& value : values)
+    {
+        output << value << std::endl;
+    }
+    return output;
+}
 
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
@@ -70,10 +77,22 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
 
 // Translate map coordinates to vehicle coordinates
 vector<double> mapc2vehc(double x_map, double y_map, double psi,
-    double xv_map, yv_map) {
-  double x_veh = xv_map + (x_map * cos(psi) + y_map * sin(psi));
-  double y_veh = yv_map + (y_map * cos(psi) - x_map * sin(psi));
-  return {x_veh, y_veh};
+    double xv_map, double yv_map)
+{
+  x_map -= xv_map;
+  y_map -= yv_map;
+  double x_veh = x_map * cos(psi) + y_map * sin(psi);
+  double y_veh = y_map * cos(psi) - x_map * sin(psi);
+  return { x_veh, y_veh };
+}
+
+// Translate vehicle coordinates to map coordinates
+vector<double> vehc2mapc(double x_veh, double y_veh, double psi,
+    double xv_map, double yv_map)
+{
+  double x_map = xv_map + (x_veh * cos(psi) - y_veh * sin(psi));
+  double y_map = yv_map + (y_veh * cos(psi) + x_veh * sin(psi));
+  return { x_map, y_map };
 }
 
 int main()
@@ -110,34 +129,50 @@ int main()
           * Both are in between [-1, 1].
           *
           */
-          Eigen::VectorXd state;
-          Eigen::VectorXd coeffs = polyfit(ptsx, ptsy, 3);
+          for (int i = 0; i < ptsx.size(); i++) {
+            vector<double> veh_c = mapc2vehc(ptsx[i], ptsy[i], psi, px, py);
+            ptsx[i] = veh_c[0];
+            ptsy[i] = veh_c[1];
+          }
+          Eigen::Map<Eigen::VectorXd> ptsx_eigen(&ptsx[0], ptsx.size());
+          Eigen::Map<Eigen::VectorXd> ptsy_eigen(&ptsy[0], ptsy.size());
+
+          Eigen::VectorXd coeffs = polyfit(ptsx_eigen, ptsy_eigen, 3);
 
           // plot reference trajectory
-          int trajectory_len = 10; // meters
+          int trajectory_len = 50; // meters
           int n_plot_points = 10;
           vector<double> ref_x_vals;
           vector<double> ref_y_vals;
           for (int i = 0; i < n_plot_points; i++) {
-            double x_map = i * (trajectory_len / n_plot_points);
-            double y_map = polyeval(coeffs, x_map);
-            double<vector> veh_c = mapc2vehc(x_map, y_map, psi, px, py)
-            ref_x_vals.push_back(veh_c[0]);
-            ref_y_vals.push_back(veh_c[1]);
+            double x_veh = i * (trajectory_len / n_plot_points);
+            double y_veh = polyeval(coeffs, x_veh);
+            ref_x_vals.push_back(x_veh);
+            ref_y_vals.push_back(y_veh);
           }
 
-          state << px, py, psi, v, polyeval(coeffs, px) - py, psi - atan(coeffs[1]);
+          Eigen::VectorXd state(6);
 
-          vector<double> result = mpc.solve(state, coeffs);
+          state << 0, 0, 0, v, polyeval(coeffs, 0), -atan(coeffs[1]);
+
+          /*
+          cout << endl
+               << endl
+               << "< ------------------------------------------------------------>" << endl
+               << endl
+               << endl
+               << endl;
+          cout << "mpC SOLVING"
+               << endl
+               << endl;
+          cout << "< ------------------------------------------------------------>" << endl
+               << endl
+               << endl;
+               */
+
+          vector<vector<double>> result = mpc.Solve(state, coeffs);
           // convert map coordinates to vehicle coordinates
-          for (int i = 0; i < result[2].size(); i++) {
-            double x_map = result[2][i];
-            double y_map = result[3][i];
-            double<vector> veh_c = mapc2vehc(x_map, y_map, psi, px, py)
-              result[2][i] = veh_c[0];
-              result[3][i] = veh_c[1];
-          }
-          double steer_value = -result[0][0] / deg2rad(25);
+          double steer_value = result[0][0];
           double throttle_value = result[1][0];
 
           json msgJson;
