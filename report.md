@@ -2,7 +2,7 @@
 ## The Model
 ![model](./model.png)
 
-  I implemented the model like the [lecture](https://github.com/udacity/CarND-MPC-Quizzes/blob/master/mpc_to_line/solution/MPC.cpp but with two additional cost parameters), while adding two additional cost parameters
+  I implemented the model like the [lecture](https://github.com/udacity/CarND-MPC-Quizzes/blob/master/mpc_to_line/solution/MPC.cpp), while adding two additional cost parameters
   First, the cost is augmented with speed * (cross track error + orientation error). This is to tell the car to slow down when the car is off trajectory.
   Second, the cost is augmented with speed * (steer_angle). This is to tell the car to slow down when the car is steering, which is commen sense when driving.
   I call them "turn sensitivity" parameters. These parameters help car make sharp turns safely by regulating the relationship between the speed, steering angle and reference trajectory.
