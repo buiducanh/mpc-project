@@ -6,8 +6,9 @@
 using CppAD::AD;
 
 // TODO: Set the timestep length and duration
-size_t N = 25;
-double dt = 0.1;
+size_t N = 20;
+double dt = 0.05;
+double latency = 0.1;
 
 int x_start = 0;
 int y_start = N;
@@ -31,7 +32,7 @@ int a_start = N * 6 + N - 1;
 const double Lf = 2.67;
 
 const double ref_v = 70;
-const double steer_angle = 20;
+const double steer_angle = 30;
 
 constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
@@ -59,7 +60,7 @@ class FG_eval {
       fg[0] += 400 * CppAD::pow(vars[cte_start + t], 2);
       fg[0] += 400 * CppAD::pow(vars[epsi_start + t], 2);
       fg[0] += 20 * CppAD::pow(vars[v_start + t] - ref_v, 2);
-      fg[0] += 10 * CppAD::pow((vars[epsi_start + t] + vars[cte_start]) * vars[v_start + t], 2);
+      fg[0] += 6 * CppAD::pow((vars[epsi_start + t] + vars[cte_start]) * vars[v_start + t], 2);
     }
 
     // constrain cost to limit change rate and smooth the actuator
@@ -73,7 +74,7 @@ class FG_eval {
 
     // constrain cost to limit difference between sequential actuations
     for (int t = 0; t < N - 2; t++) {
-      fg[0] += 800 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+      fg[0] += 400 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
       fg[0] += 350 * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
     }
 
@@ -240,7 +241,7 @@ vector<vector<double>> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs)
   // {...} is shorthand for creating a vector, so auto x1 = {1.0,2.0}
   // creates a 2 element double vector.
   return {
-    { -(solution.x[delta_start + 1] / deg2rad(steer_angle))}, { solution.x[a_start] },
+    { -(solution.x[delta_start + int(latency / dt)] / deg2rad(steer_angle))}, { solution.x[a_start + int(latency / dt)] },
     { vector<double>(&solution.x[x_start], &solution.x[N <= 6 ? x_start + N : x_start + 6]) },
     { vector<double>(&solution.x[y_start], &solution.x[N <= 6 ? y_start + N : y_start + 6]) }
   };
